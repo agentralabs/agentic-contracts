@@ -1,13 +1,13 @@
 [package]
-name = "agentic-contracts"
+name = "agentic-sdk"
 version = "0.2.0"
 edition = "2021"
 authors = ["Agentra Labs <contact@agentralabs.tech>"]
-description = "Shared contracts for the AgenticOS ecosystem - traits, types, and standards that all sisters implement"
+description = "Shared SDK for the Agentra ecosystem - traits, types, and standards that all sisters implement"
 license = "MIT"
 homepage = "https://agentralabs.tech"
-repository = "https://github.com/agentralabs/agentic-contracts"
-keywords = ["agentic", "ai", "agents", "contracts", "mcp"]
+repository = "https://github.com/agentralabs/agentic-sdk"
+keywords = ["agentic", "ai", "agents", "sdk", "mcp"]
 categories = ["development-tools", "api-bindings"]
 readme = "README.md"
 

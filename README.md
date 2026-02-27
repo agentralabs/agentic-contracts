@@ -1,4 +1,4 @@
-# agentic-contracts
+# agentic-sdk
 
 **Shared contracts for the Agentra ecosystem.**
 
@@ -8,7 +8,7 @@ This crate defines the traits, types, and standards that ALL sisters must implem
 
 ```toml
 [dependencies]
-agentic-contracts = "0.2"
+agentic-sdk = "0.2"
 ```
 
 ## Core Traits
@@ -17,7 +17,7 @@ agentic-contracts = "0.2"
 The foundation that all sisters implement:
 
 ```rust
-use agentic_contracts::prelude::*;
+use agentic_sdk::prelude::*;
 
 pub struct MyNewSister { /* ... */ }
 
@@ -97,7 +97,7 @@ Each sister uses its own binary header format. The contracts provide
 `FileFormatReader` and `FileFormatWriter` traits for unified access:
 
 ```rust
-use agentic_contracts::file_format::*;
+use agentic_sdk::file_format::*;
 
 impl FileFormatReader for MyNewSister {
     fn can_read(&self, path: &Path) -> bool { /* check magic bytes */ }
@@ -116,7 +116,7 @@ impl FileFormatWriter for MyNewSister {
 Two-layer error model across all sisters:
 
 ```rust
-use agentic_contracts::errors::*;
+use agentic_sdk::errors::*;
 
 // Domain errors (tool execution failures -> isError: true in MCP)
 let err = SisterError::not_found("node_123");

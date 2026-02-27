@@ -1,6 +1,6 @@
 //! Mock sister implementations validating v0.2.0 contracts.
 //!
-//! These mocks prove that every trait in agentic-contracts
+//! These mocks prove that every trait in agentic-sdk
 //! can be implemented by real sisters. Each mock mirrors
 //! the actual pattern used by that sister type.
 //!
@@ -10,7 +10,7 @@
 //! - MockIdentity: Sister + SessionManagement + Grounding + ReceiptIntegration
 //! - MockTime:     Sister only (stateless — no sessions, no grounding)
 
-use agentic_contracts::prelude::*;
+use agentic_sdk::prelude::*;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Mutex;

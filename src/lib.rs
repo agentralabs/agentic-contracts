@@ -1,6 +1,6 @@
 //! # Agentic Contracts v0.2.0
 //!
-//! Shared contracts for the AgenticOS ecosystem.
+//! Shared contracts for the Agentra ecosystem.
 //!
 //! This crate defines the traits, types, and standards that ALL sisters must implement.
 //! It serves as the single source of truth for:
@@ -31,11 +31,11 @@
 //!
 //! ```toml
 //! [dependencies]
-//! agentic-contracts = "0.2"
+//! agentic-sdk = "0.2"
 //! ```
 //!
 //! ```rust,ignore
-//! use agentic_contracts::prelude::*;
+//! use agentic_sdk::prelude::*;
 //!
 //! pub struct MyNewSister {
 //!     // ...
