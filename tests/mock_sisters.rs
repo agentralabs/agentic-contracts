@@ -108,8 +108,11 @@ impl SessionManagement for MockMemory {
         };
         self.sessions.lock().unwrap().push(summary);
 
-        self.events
-            .emit(SisterEvent::context_created(SisterType::Memory, id, name.to_string()));
+        self.events.emit(SisterEvent::context_created(
+            SisterType::Memory,
+            id,
+            name.to_string(),
+        ));
         Ok(id)
     }
 
@@ -180,14 +183,10 @@ impl Grounding for MockMemory {
             .collect();
 
         if matches.is_empty() {
-            Ok(GroundingResult::ungrounded(claim, "No matching memories found")
-                .with_suggestions(
-                    nodes
-                        .iter()
-                        .take(3)
-                        .map(|(_, c)| c.clone())
-                        .collect(),
-                ))
+            Ok(
+                GroundingResult::ungrounded(claim, "No matching memories found")
+                    .with_suggestions(nodes.iter().take(3).map(|(_, c)| c.clone()).collect()),
+            )
         } else {
             // BM25-like: best match score matters, not ratio
             let best_score = matches
@@ -195,7 +194,10 @@ impl Grounding for MockMemory {
                 .map(|(_, content)| {
                     let claim_words: Vec<&str> = claim_lower.split_whitespace().collect();
                     let content_lower = content.to_lowercase();
-                    let matched = claim_words.iter().filter(|w| content_lower.contains(**w)).count();
+                    let matched = claim_words
+                        .iter()
+                        .filter(|w| content_lower.contains(**w))
+                        .count();
                     matched as f64 / claim_words.len().max(1) as f64
                 })
                 .fold(0.0f64, |a, b| a.max(b));
@@ -203,7 +205,12 @@ impl Grounding for MockMemory {
             let evidence = matches
                 .iter()
                 .map(|(id, content)| {
-                    GroundingEvidence::new("memory_node", format!("node_{}", id), best_score, content)
+                    GroundingEvidence::new(
+                        "memory_node",
+                        format!("node_{}", id),
+                        best_score,
+                        content,
+                    )
                 })
                 .collect();
 
@@ -291,7 +298,10 @@ impl Queryable for MockMemory {
     }
 
     fn supports_query(&self, query_type: &str) -> bool {
-        matches!(query_type, "list" | "search" | "recent" | "related" | "temporal")
+        matches!(
+            query_type,
+            "list" | "search" | "recent" | "related" | "temporal"
+        )
     }
 
     fn query_types(&self) -> Vec<QueryTypeInfo> {
@@ -524,7 +534,10 @@ impl Grounding for MockCodebase {
             .collect();
 
         if matches.is_empty() {
-            Ok(GroundingResult::ungrounded(claim, "Symbol not found in graph"))
+            Ok(GroundingResult::ungrounded(
+                claim,
+                "Symbol not found in graph",
+            ))
         } else {
             let evidence = matches
                 .iter()
@@ -1076,8 +1089,7 @@ fn test_memory_snapshot_export_import() {
 
 #[test]
 fn test_codebase_workspaces() {
-    let config = SisterConfig::default()
-        .add_path("default_graph", "/tmp/mock.acb");
+    let config = SisterConfig::default().add_path("default_graph", "/tmp/mock.acb");
     let mut codebase = MockCodebase::init(config).unwrap();
 
     assert_eq!(codebase.sister_type(), SisterType::Codebase);
@@ -1156,12 +1168,8 @@ fn test_identity_receipt_chain() {
     assert_eq!(identity.file_extension(), "aid");
 
     // Create receipts
-    let action1 = ActionRecord::new(
-        SisterType::Memory,
-        "memory_add",
-        ActionOutcome::success(),
-    )
-    .param("content", "test memory");
+    let action1 = ActionRecord::new(SisterType::Memory, "memory_add", ActionOutcome::success())
+        .param("content", "test memory");
 
     let action2 = ActionBuilder::new(SisterType::Vision, "vision_capture")
         .success_with(serde_json::json!({"capture_id": 42}));
@@ -1175,9 +1183,7 @@ fn test_identity_receipt_chain() {
     assert!(receipt.was_successful());
 
     // List receipts with filter
-    let all = identity
-        .list_receipts(ReceiptFilter::new())
-        .unwrap();
+    let all = identity.list_receipts(ReceiptFilter::new()).unwrap();
     assert_eq!(all.len(), 2);
 
     let memory_only = identity
@@ -1227,7 +1233,10 @@ fn test_sister_config_patterns() {
         .memory_budget(512)
         .option("auto_session", true);
 
-    assert_eq!(config1.primary_path(), std::path::PathBuf::from("/data/memory.amem"));
+    assert_eq!(
+        config1.primary_path(),
+        std::path::PathBuf::from("/data/memory.amem")
+    );
     assert!(!config1.read_only);
     assert_eq!(config1.memory_budget_mb, Some(512));
     assert_eq!(config1.get_option::<bool>("auto_session"), Some(true));
@@ -1308,7 +1317,10 @@ fn test_version_compatibility_rules() {
 fn test_file_format_magic_identification() {
     assert_eq!(identify_sister_by_magic(b"AMEM"), Some(SisterType::Memory));
     assert_eq!(identify_sister_by_magic(b"AVIS"), Some(SisterType::Vision));
-    assert_eq!(identify_sister_by_magic(b"ACDB"), Some(SisterType::Codebase));
+    assert_eq!(
+        identify_sister_by_magic(b"ACDB"),
+        Some(SisterType::Codebase)
+    );
     assert_eq!(identify_sister_by_magic(b"ATIM"), Some(SisterType::Time));
     assert_eq!(identify_sister_by_magic(b"XXXX"), None);
 
