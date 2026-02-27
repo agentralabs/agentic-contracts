@@ -1,20 +1,8 @@
 # agentic-contracts
 
-**Shared contracts for the AgenticOS ecosystem.**
+**Shared contracts for the Agentra ecosystem.**
 
 This crate defines the traits, types, and standards that ALL sisters must implement. It serves as the single source of truth for the ecosystem.
-
-## The Promise
-
-```
-╔═══════════════════════════════════════════════════════════════╗
-║                                                               ║
-║   ANY sister can be consumed by Hydra uniformly.              ║
-║   ANY sister can work with ANY other sister.                  ║
-║   ANY file format will be readable in 20 years.               ║
-║                                                               ║
-╚═══════════════════════════════════════════════════════════════╝
-```
 
 ## Installation
 
