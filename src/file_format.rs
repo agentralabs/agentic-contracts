@@ -132,6 +132,7 @@ pub fn read_magic_bytes(path: &Path) -> SisterResult<[u8; 4]> {
 /// - "AVIS" (0x41564953) → Vision
 /// - "ACDB" (0x41434442) → Codebase
 /// - "ATIM" (0x4154494D) → Time
+/// - "ACON" (0x41434F4E) → Contract
 ///
 /// Returns None for JSON-based formats (Identity) or unknown formats.
 pub fn identify_sister_by_magic(magic: &[u8; 4]) -> Option<SisterType> {
@@ -140,6 +141,7 @@ pub fn identify_sister_by_magic(magic: &[u8; 4]) -> Option<SisterType> {
         b"AVIS" => Some(SisterType::Vision),
         b"ACDB" => Some(SisterType::Codebase),
         b"ATIM" => Some(SisterType::Time),
+        b"ACON" => Some(SisterType::Contract),
         _ => None,
     }
 }
@@ -174,6 +176,10 @@ mod tests {
             Some(SisterType::Codebase)
         );
         assert_eq!(identify_sister_by_magic(b"ATIM"), Some(SisterType::Time));
+        assert_eq!(
+            identify_sister_by_magic(b"ACON"),
+            Some(SisterType::Contract)
+        );
         assert_eq!(identify_sister_by_magic(b"XXXX"), None);
         assert_eq!(identify_sister_by_magic(b"AGNT"), None); // v0.1.0 magic, no longer used
     }

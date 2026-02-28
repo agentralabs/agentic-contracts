@@ -9,6 +9,7 @@
 //! - MockCodebase: Sister + WorkspaceManagement + Grounding + Queryable
 //! - MockIdentity: Sister + SessionManagement + Grounding + ReceiptIntegration
 //! - MockTime:     Sister only (stateless — no sessions, no grounding)
+//! - MockContract: Sister + SessionManagement + Grounding + Queryable + ReceiptIntegration + EventEmitter
 
 use agentic_sdk::prelude::*;
 use chrono::Utc;
@@ -946,6 +947,386 @@ impl Queryable for MockTime {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// MOCK CONTRACT — Full-featured sister (sessions, grounding, queries, receipts, events)
+// ═══════════════════════════════════════════════════════════════════
+
+struct MockContract {
+    start_time: Instant,
+    session_id: Mutex<Option<ContextId>>,
+    sessions: Mutex<Vec<ContextSummary>>,
+    events: EventManager,
+    policies: Mutex<Vec<(u64, String, String)>>, // (id, label, scope)
+    next_id: Mutex<u64>,
+    receipts: Mutex<Vec<Receipt>>,
+    chain_position: Mutex<u64>,
+}
+
+impl MockContract {
+    fn new(_config: SisterConfig) -> SisterResult<Self> {
+        Ok(Self {
+            start_time: Instant::now(),
+            session_id: Mutex::new(None),
+            sessions: Mutex::new(vec![]),
+            events: EventManager::new(256),
+            policies: Mutex::new(vec![]),
+            next_id: Mutex::new(1),
+            receipts: Mutex::new(vec![]),
+            chain_position: Mutex::new(0),
+        })
+    }
+
+    fn add_policy(&self, label: &str, scope: &str) -> u64 {
+        let mut policies = self.policies.lock().unwrap();
+        let mut next = self.next_id.lock().unwrap();
+        let id = *next;
+        *next += 1;
+        policies.push((id, label.to_string(), scope.to_string()));
+        id
+    }
+}
+
+impl Sister for MockContract {
+    const SISTER_TYPE: SisterType = SisterType::Contract;
+    const FILE_EXTENSION: &'static str = "acon";
+
+    fn init(config: SisterConfig) -> SisterResult<Self>
+    where
+        Self: Sized,
+    {
+        MockContract::new(config)
+    }
+
+    fn health(&self) -> HealthStatus {
+        HealthStatus {
+            healthy: true,
+            status: Status::Ready,
+            uptime: self.start_time.elapsed(),
+            resources: ResourceUsage::default(),
+            warnings: vec![],
+            last_error: None,
+        }
+    }
+
+    fn version(&self) -> Version {
+        Version::new(0, 2, 0)
+    }
+
+    fn shutdown(&mut self) -> SisterResult<()> {
+        self.events
+            .emit(SisterEvent::shutting_down(SisterType::Contract));
+        Ok(())
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![
+            Capability::new("policy_add", "Add a policy rule governing agent behavior"),
+            Capability::new(
+                "policy_check",
+                "Check if an action is allowed under policies",
+            ),
+            Capability::new("risk_limit_set", "Set a risk limit threshold"),
+            Capability::new(
+                "approval_request",
+                "Request approval for a controlled action",
+            ),
+            Capability::new("violation_report", "Report a contract or policy violation"),
+        ]
+    }
+}
+
+impl SessionManagement for MockContract {
+    fn start_session(&mut self, name: &str) -> SisterResult<ContextId> {
+        let id = ContextId::new();
+        *self.session_id.lock().unwrap() = Some(id);
+
+        let summary = ContextSummary {
+            id,
+            name: name.to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            item_count: 0,
+            size_bytes: 0,
+        };
+        self.sessions.lock().unwrap().push(summary);
+
+        self.events.emit(SisterEvent::context_created(
+            SisterType::Contract,
+            id,
+            name.to_string(),
+        ));
+        Ok(id)
+    }
+
+    fn end_session(&mut self) -> SisterResult<()> {
+        *self.session_id.lock().unwrap() = None;
+        Ok(())
+    }
+
+    fn current_session(&self) -> Option<ContextId> {
+        *self.session_id.lock().unwrap()
+    }
+
+    fn current_session_info(&self) -> SisterResult<ContextInfo> {
+        let id = self
+            .current_session()
+            .ok_or_else(|| SisterError::new(ErrorCode::InvalidState, "No active session"))?;
+
+        Ok(ContextInfo {
+            id,
+            name: "contract_session".to_string(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            item_count: self.policies.lock().unwrap().len(),
+            size_bytes: 0,
+            metadata: Metadata::new(),
+        })
+    }
+
+    fn list_sessions(&self) -> SisterResult<Vec<ContextSummary>> {
+        Ok(self.sessions.lock().unwrap().clone())
+    }
+
+    fn export_session(&self, _id: ContextId) -> SisterResult<ContextSnapshot> {
+        let info = self.current_session_info()?;
+        let data = serde_json::to_vec(&self.policies.lock().unwrap().clone())
+            .map_err(|e| SisterError::new(ErrorCode::Internal, e.to_string()))?;
+        let checksum = *blake3::hash(&data).as_bytes();
+
+        Ok(ContextSnapshot {
+            sister_type: SisterType::Contract,
+            version: Version::new(0, 2, 0),
+            context_info: info,
+            data,
+            checksum,
+            snapshot_at: Utc::now(),
+        })
+    }
+
+    fn import_session(&mut self, snapshot: ContextSnapshot) -> SisterResult<ContextId> {
+        if !snapshot.verify() {
+            return Err(SisterError::new(
+                ErrorCode::ChecksumMismatch,
+                "Snapshot checksum verification failed",
+            ));
+        }
+        self.start_session(&snapshot.context_info.name)
+    }
+}
+
+impl Grounding for MockContract {
+    fn ground(&self, claim: &str) -> SisterResult<GroundingResult> {
+        let policies = self.policies.lock().unwrap();
+        let claim_lower = claim.to_lowercase();
+
+        let matches: Vec<_> = policies
+            .iter()
+            .filter(|(_, label, _)| label.to_lowercase().contains(&claim_lower))
+            .collect();
+
+        if matches.is_empty() {
+            Ok(
+                GroundingResult::ungrounded(claim, "No matching policies found")
+                    .with_suggestions(policies.iter().take(3).map(|(_, l, _)| l.clone()).collect()),
+            )
+        } else {
+            let best_score = matches
+                .iter()
+                .map(|(_, label, _)| {
+                    let claim_words: Vec<&str> = claim_lower.split_whitespace().collect();
+                    let label_lower = label.to_lowercase();
+                    let matched = claim_words
+                        .iter()
+                        .filter(|w| label_lower.contains(**w))
+                        .count();
+                    matched as f64 / claim_words.len().max(1) as f64
+                })
+                .fold(0.0f64, |a, b| a.max(b));
+
+            let evidence = matches
+                .iter()
+                .map(|(id, label, scope)| {
+                    GroundingEvidence::new(
+                        "policy",
+                        format!("policy_{}", id),
+                        best_score,
+                        format!("{} [{}]", label, scope),
+                    )
+                })
+                .collect();
+
+            if best_score > 0.5 {
+                Ok(GroundingResult::verified(claim, best_score)
+                    .with_evidence(evidence)
+                    .with_reason("Found matching policies"))
+            } else {
+                Ok(GroundingResult::partial(claim, best_score)
+                    .with_evidence(evidence)
+                    .with_reason("Some policy evidence found"))
+            }
+        }
+    }
+
+    fn evidence(&self, query: &str, max_results: usize) -> SisterResult<Vec<EvidenceDetail>> {
+        let policies = self.policies.lock().unwrap();
+        let query_lower = query.to_lowercase();
+
+        Ok(policies
+            .iter()
+            .filter(|(_, label, _)| label.to_lowercase().contains(&query_lower))
+            .take(max_results)
+            .map(|(id, label, scope)| EvidenceDetail {
+                evidence_type: "policy".to_string(),
+                id: format!("policy_{}", id),
+                score: 0.8,
+                created_at: Utc::now(),
+                source_sister: SisterType::Contract,
+                content: format!("{} [{}]", label, scope),
+                data: Metadata::new(),
+            })
+            .collect())
+    }
+
+    fn suggest(&self, _query: &str, limit: usize) -> SisterResult<Vec<GroundingSuggestion>> {
+        let policies = self.policies.lock().unwrap();
+
+        Ok(policies
+            .iter()
+            .take(limit)
+            .map(|(id, label, scope)| GroundingSuggestion {
+                item_type: "policy".to_string(),
+                id: format!("policy_{}", id),
+                relevance_score: 0.5,
+                description: format!("{} [{}]", label, scope),
+                data: Metadata::new(),
+            })
+            .collect())
+    }
+}
+
+impl Queryable for MockContract {
+    fn query(&self, query: Query) -> SisterResult<QueryResult> {
+        let start = Instant::now();
+        let policies = self.policies.lock().unwrap();
+
+        let results: Vec<serde_json::Value> = match query.query_type.as_str() {
+            "list" => policies
+                .iter()
+                .skip(query.offset.unwrap_or(0))
+                .take(query.limit.unwrap_or(20))
+                .map(|(id, label, scope)| {
+                    serde_json::json!({"id": id, "label": label, "scope": scope})
+                })
+                .collect(),
+            "search" => {
+                let text = query.get_string("text").unwrap_or_default().to_lowercase();
+                policies
+                    .iter()
+                    .filter(|(_, label, _)| label.to_lowercase().contains(&text))
+                    .take(query.limit.unwrap_or(20))
+                    .map(|(id, label, scope)| {
+                        serde_json::json!({"id": id, "label": label, "scope": scope})
+                    })
+                    .collect()
+            }
+            "recent" => policies
+                .iter()
+                .rev()
+                .take(query.limit.unwrap_or(10))
+                .map(|(id, label, scope)| {
+                    serde_json::json!({"id": id, "label": label, "scope": scope})
+                })
+                .collect(),
+            _ => vec![],
+        };
+
+        Ok(QueryResult::new(query, results, start.elapsed()))
+    }
+
+    fn supports_query(&self, query_type: &str) -> bool {
+        matches!(query_type, "list" | "search" | "recent" | "get")
+    }
+
+    fn query_types(&self) -> Vec<QueryTypeInfo> {
+        vec![
+            QueryTypeInfo::new("list", "List all policies"),
+            QueryTypeInfo::new("search", "Search policies by label").required(vec!["text"]),
+            QueryTypeInfo::new("recent", "Get most recent policies"),
+        ]
+    }
+}
+
+impl ReceiptIntegration for MockContract {
+    fn create_receipt(&self, action: ActionRecord) -> SisterResult<ReceiptId> {
+        let receipt_id = ReceiptId::new();
+        let mut position = self.chain_position.lock().unwrap();
+        *position += 1;
+
+        let receipt = Receipt {
+            id: receipt_id,
+            action,
+            signature: "mock_ed25519_signature".to_string(),
+            chain_position: *position,
+            previous_hash: "0000000000000000".to_string(),
+            hash: format!("hash_{}", position),
+            created_at: Utc::now(),
+        };
+
+        self.receipts.lock().unwrap().push(receipt);
+        Ok(receipt_id)
+    }
+
+    fn get_receipt(&self, id: ReceiptId) -> SisterResult<Receipt> {
+        self.receipts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|r| r.id == id)
+            .cloned()
+            .ok_or_else(|| SisterError::not_found(format!("Receipt {}", id)))
+    }
+
+    fn list_receipts(&self, filter: ReceiptFilter) -> SisterResult<Vec<Receipt>> {
+        let receipts = self.receipts.lock().unwrap();
+        let mut results: Vec<_> = receipts
+            .iter()
+            .filter(|r| {
+                if let Some(ref st) = filter.sister_type {
+                    if r.action.sister_type != *st {
+                        return false;
+                    }
+                }
+                if let Some(ref at) = filter.action_type {
+                    if r.action.action_type != *at {
+                        return false;
+                    }
+                }
+                true
+            })
+            .cloned()
+            .collect();
+
+        if let Some(limit) = filter.limit {
+            results.truncate(limit);
+        }
+        Ok(results)
+    }
+}
+
+impl EventEmitter for MockContract {
+    fn subscribe(&self, _filter: EventFilter) -> EventReceiver {
+        self.events.subscribe()
+    }
+
+    fn recent_events(&self, limit: usize) -> Vec<SisterEvent> {
+        self.events.recent(limit)
+    }
+
+    fn emit(&self, event: SisterEvent) {
+        self.events.emit(event);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // TESTS — Validate all trait compositions compile and work
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1226,6 +1607,112 @@ fn test_time_stateless() {
 }
 
 #[test]
+fn test_contract_full_featured() {
+    // Contract is the most trait-rich sister: sessions, grounding, queries, receipts, events
+    let config = SisterConfig::new("/tmp/mock-contract");
+    let mut contract = MockContract::init(config).unwrap();
+
+    assert_eq!(contract.sister_type(), SisterType::Contract);
+    assert_eq!(contract.file_extension(), "acon");
+    assert_eq!(contract.mcp_prefix(), "contract");
+    assert!(contract.is_healthy());
+
+    // Sessions
+    assert!(contract.current_session().is_none());
+    let session_id = contract.start_session("governance_session").unwrap();
+    assert_eq!(contract.current_session().unwrap(), session_id);
+
+    let info = contract.current_session_info().unwrap();
+    assert_eq!(info.id, session_id);
+
+    // Add policies
+    contract.add_policy("Require approval for deploys", "global");
+    contract.add_policy("Rate limit API calls", "session");
+    contract.add_policy("Block access after hours", "agent");
+
+    // Queryable
+    let result = contract.query(Query::list().limit(2)).unwrap();
+    assert_eq!(result.len(), 2);
+
+    let result = contract.search("approval").unwrap();
+    assert_eq!(result.len(), 1);
+
+    let result = contract.recent(2).unwrap();
+    assert_eq!(result.len(), 2);
+
+    assert!(contract.supports_query("list"));
+    assert!(contract.supports_query("search"));
+    assert!(!contract.supports_query("unknown"));
+
+    let types = contract.query_types();
+    assert_eq!(types.len(), 3);
+
+    // Grounding
+    let result = contract.ground("require approval").unwrap();
+    assert_eq!(result.status, GroundingStatus::Verified);
+    assert!(!result.evidence.is_empty());
+
+    let result = contract.ground("nonexistent policy xyz").unwrap();
+    assert_eq!(result.status, GroundingStatus::Ungrounded);
+
+    let evidence = contract.evidence("rate limit", 10).unwrap();
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].source_sister, SisterType::Contract);
+
+    let suggestions = contract.suggest("anything", 5).unwrap();
+    assert!(!suggestions.is_empty());
+
+    // Receipts — create action records for policy decisions
+    let action1 = ActionRecord::new(
+        SisterType::Contract,
+        "policy_check",
+        ActionOutcome::success(),
+    )
+    .param("policy_id", 1)
+    .param("result", "allowed");
+
+    let receipt_id1 = contract.create_receipt(action1).unwrap();
+    let receipt = contract.get_receipt(receipt_id1).unwrap();
+    assert_eq!(receipt.chain_position, 1);
+    assert_eq!(receipt.action.action_type, "policy_check");
+
+    let action2 = ActionRecord::new(
+        SisterType::Contract,
+        "violation_report",
+        ActionOutcome::failure("RATE_LIMIT", "Rate limit exceeded"),
+    )
+    .param("policy_id", 2)
+    .param("severity", "warning");
+
+    let receipt_id2 = contract.create_receipt(action2).unwrap();
+    assert_eq!(contract.get_receipt(receipt_id2).unwrap().chain_position, 2);
+
+    // Filter receipts by action type
+    let filter = ReceiptFilter::new().action("violation_report");
+    let captures = contract.list_receipts(filter).unwrap();
+    assert_eq!(captures.len(), 1);
+    assert_eq!(captures[0].id, receipt_id2);
+
+    // Events
+    let events = contract.recent_events(10);
+    assert!(!events.is_empty()); // Should have context_created event
+
+    // Export session
+    let snapshot = contract.export_session(session_id).unwrap();
+    assert!(snapshot.verify());
+    assert_eq!(snapshot.sister_type, SisterType::Contract);
+
+    // SisterInfo
+    let sister_info = SisterInfo::from_sister(&contract);
+    assert_eq!(sister_info.sister_type, SisterType::Contract);
+
+    contract.end_session().unwrap();
+    assert!(contract.current_session().is_none());
+
+    contract.shutdown().unwrap();
+}
+
+#[test]
 fn test_sister_config_patterns() {
     // Pattern 1: Single data path (Memory, Vision)
     let config1 = SisterConfig::new("/data/memory.amem")
@@ -1322,6 +1809,10 @@ fn test_file_format_magic_identification() {
         Some(SisterType::Codebase)
     );
     assert_eq!(identify_sister_by_magic(b"ATIM"), Some(SisterType::Time));
+    assert_eq!(
+        identify_sister_by_magic(b"ACON"),
+        Some(SisterType::Contract)
+    );
     assert_eq!(identify_sister_by_magic(b"XXXX"), None);
 
     // v0.1.0 "AGNT" magic is NOT recognized (correctly)
